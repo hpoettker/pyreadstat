@@ -1,3 +1,7 @@
+# 1.3.5 (github, pypi and conda 2026.05.xx)
+* Readstat sources updated to commit 3add3a5eaac6df24d938beffb9148792e362d9ef
+
+
 # 1.3.4 (github, pypi and conda 2026.05.15)
 * Refactored pyreadstat.pyx to pyreadstat.py solves #299
 * Added env variable PYREADSTAT_LINK_ICONV to link iconv at compiling time
