@@ -43,6 +43,7 @@ typedef struct sas7bdat_ctx_s {
     readstat_io_t *io;
     int            bswap;
     int            did_submit_columns;
+    int            requires_seek;
 
     uint32_t        row_length;
     uint32_t        page_row_count;
@@ -959,7 +960,7 @@ static readstat_error_t sas7bdat_parse_page_pass1(const char *page, size_t page_
         if ((retval = sas7bdat_parse_subheader_pointer(shp, page + page_size - shp, &shp_info, ctx)) != READSTAT_OK) {
             goto cleanup;
         }
-        if (shp_info.len > 0 && shp_info.compression != SAS_COMPRESSION_TRUNC) {
+        if (shp_info.len > 0 && shp_info.compression != SAS_COMPRESSION_TRUNC && shp_info.compression != SAS_COMPRESSION_MOVED) {
             if ((retval = sas7bdat_validate_subheader_pointer(&shp_info, page_size, subheader_count, ctx)) != READSTAT_OK) {
                 goto cleanup;
             }
@@ -971,7 +972,8 @@ static readstat_error_t sas7bdat_parse_page_pass1(const char *page, size_t page_
                         goto cleanup;
                     }
                 }
-            } else if (shp_info.compression == SAS_COMPRESSION_ROW || shp_info.compression == SAS_COMPRESSION_DELETED_ROW) {
+            } else if (shp_info.compression == SAS_COMPRESSION_ROW || shp_info.compression == SAS_COMPRESSION_DELETED_ROW ||
+                    shp_info.compression == SAS_COMPRESSION_MOVED_ROW || shp_info.compression == SAS_COMPRESSION_MYSTERY) {
                 /* void */
             } else {
                 retval = READSTAT_ERROR_UNSUPPORTED_COMPRESSION;
@@ -1006,6 +1008,83 @@ static readstat_error_t sas7bdat_parse_deleted_row_bitmap(const char *page, cons
     return READSTAT_OK;
 }
 
+static readstat_error_t sas7bdat_parse_moved_row(uint64_t page_index, uint64_t subheader_index, sas7bdat_ctx_t *ctx) {
+    readstat_error_t retval = READSTAT_OK;
+    readstat_io_t *io = ctx->io;
+
+    const uint64_t page_size = ctx->page_size;
+    char *page = NULL;
+
+    if (page_index >= ctx->page_count) {
+        retval = READSTAT_ERROR_PARSE;
+        goto cleanup;
+    }
+
+    ctx->requires_seek = 1;
+    if (io->seek(ctx->header_size + page_index * page_size, READSTAT_SEEK_SET, io->io_ctx) == -1) {
+        retval = READSTAT_ERROR_SEEK;
+        if (ctx->handle.error) {
+            snprintf(ctx->error_buf, sizeof(ctx->error_buf), "ReadStat: Failed to seek to position %" PRId64
+                    " (= %" PRId64 " + %" PRId64 "*%" PRId64 ")",
+                    ctx->header_size + page_index * page_size, ctx->header_size, page_index, page_size);
+            ctx->handle.error(ctx->error_buf, ctx->user_ctx);
+        }
+        goto cleanup;
+    }
+    if ((page = readstat_malloc(page_size)) == NULL) {
+        retval = READSTAT_ERROR_MALLOC;
+        goto cleanup;
+    }
+    if (io->read(page, page_size, io->io_ctx) < page_size) {
+        retval = READSTAT_ERROR_READ;
+        goto cleanup;
+    }
+
+    uint16_t page_type = sas_read2(&page[ctx->page_header_size - 8], ctx->bswap);
+    if ((page_type & SAS_PAGE_TYPE_MASK) == SAS_PAGE_TYPE_DATA || page_type & SAS_PAGE_TYPE_COMP) {
+        retval = READSTAT_ERROR_READ;
+        goto cleanup;
+    }
+    uint16_t subheader_count = sas_read2(&page[ctx->page_header_size - 4], ctx->bswap);
+    if (subheader_index >= subheader_count) {
+        retval = READSTAT_ERROR_READ;
+        goto cleanup;
+    }
+    uint64_t shp_offset = ctx->page_header_size + subheader_index * ctx->subheader_pointer_size;
+    if (shp_offset + ctx->subheader_pointer_size >= page_size) {
+        retval = READSTAT_ERROR_READ;
+        goto cleanup;
+    }
+
+    const char *shp = &page[shp_offset];
+    subheader_pointer_t shp_info = { 0 };
+    if ((retval = sas7bdat_parse_subheader_pointer(shp, page + page_size - shp, &shp_info, ctx)) != READSTAT_OK) {
+        goto cleanup;
+    }
+    if ((retval = sas7bdat_validate_subheader_pointer(&shp_info, page_size, subheader_count, ctx)) != READSTAT_OK) {
+        goto cleanup;
+    }
+    if (shp_info.compression != SAS_COMPRESSION_MOVED_ROW) {
+        retval = READSTAT_ERROR_UNSUPPORTED_COMPRESSION;
+        goto cleanup;
+    }
+
+    if ((retval = sas7bdat_submit_columns_if_needed(ctx, 1)) != READSTAT_OK) {
+        goto cleanup;
+    }
+    if ((retval = sas7bdat_parse_subheader_compressed(page + shp_info.offset, shp_info.len, ctx)) != READSTAT_OK) {
+        goto cleanup;
+    }
+
+cleanup:
+
+    if (page) {
+        free(page);
+    }
+
+    return retval;
+}
+
 static readstat_error_t sas7bdat_parse_page_pass2(const char *page, size_t page_size, sas7bdat_ctx_t *ctx) {
     uint16_t page_type;
 
@@ -1035,7 +1114,13 @@ static readstat_error_t sas7bdat_parse_page_pass2(const char *page, size_t page_
             if ((retval = sas7bdat_parse_subheader_pointer(shp, page + page_size - shp, &shp_info, ctx)) != READSTAT_OK) {
                 goto cleanup;
             }
-            if (shp_info.len > 0 && shp_info.compression != SAS_COMPRESSION_TRUNC) {
+            if (shp_info.len > 0 && shp_info.compression == SAS_COMPRESSION_MOVED) {
+                uint64_t page_index = shp_info.offset - 1;
+                uint64_t subheader_index = shp_info.len - 1;
+                if ((retval = sas7bdat_parse_moved_row(page_index, subheader_index, ctx)) != READSTAT_OK) {
+                    goto cleanup;
+                }
+            } else if (shp_info.len > 0 && shp_info.compression != SAS_COMPRESSION_TRUNC) {
                 if ((retval = sas7bdat_validate_subheader_pointer(&shp_info, page_size, subheader_count, ctx)) != READSTAT_OK) {
                     goto cleanup;
                 }
@@ -1070,6 +1155,8 @@ static readstat_error_t sas7bdat_parse_page_pass2(const char *page, size_t page_
                     if ((retval = sas7bdat_register_deleted_row(ctx)) != READSTAT_OK) {
                         goto cleanup;
                     }
+                } else if (shp_info.compression == SAS_COMPRESSION_MOVED_ROW || shp_info.compression == SAS_COMPRESSION_MYSTERY) {
+                    /* void */
                 } else {
                     retval = READSTAT_ERROR_UNSUPPORTED_COMPRESSION;
                     goto cleanup;
@@ -1249,6 +1336,19 @@ static readstat_error_t sas7bdat_parse_all_pages_pass2(sas7bdat_ctx_t *ctx) {
     for (i=0; i<ctx->page_count; i++) {
         if ((retval = sas7bdat_update_progress(ctx)) != READSTAT_OK) {
             goto cleanup;
+        }
+        if (ctx->requires_seek) {
+            if (io->seek(ctx->header_size + i * ctx->page_size, READSTAT_SEEK_SET, io->io_ctx) == -1) {
+                retval = READSTAT_ERROR_SEEK;
+                if (ctx->handle.error) {
+                    snprintf(ctx->error_buf, sizeof(ctx->error_buf), "ReadStat: Failed to seek to position %" PRId64
+                            " (= %" PRId64 " + %" PRId64 "*%" PRId64 ")",
+                            ctx->header_size + i * ctx->page_size, ctx->header_size, i, ctx->page_size);
+                    ctx->handle.error(ctx->error_buf, ctx->user_ctx);
+                }
+                goto cleanup;
+            }
+            ctx->requires_seek = 0;
         }
         if (io->read(ctx->page, ctx->page_size, io->io_ctx) < ctx->page_size) {
             retval = READSTAT_ERROR_READ;
