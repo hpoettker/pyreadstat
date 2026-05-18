@@ -5,6 +5,7 @@
 #include <string.h>
 #include <math.h>
 #include <inttypes.h>
+#include <limits.h>
 #include "readstat_sas.h"
 #include "readstat_sas_rle.h"
 #include "../readstat_iconv.h"
@@ -46,8 +47,10 @@ typedef struct sas7bdat_ctx_s {
     uint32_t        row_length;
     uint32_t        page_row_count;
     uint32_t        parsed_row_count;
+    uint32_t        parsed_deleted_row_count;
     uint32_t        column_count;
     uint32_t        row_limit;
+    uint32_t        deleted_row_limit;
     uint32_t        row_offset;
 
     uint64_t        header_size;
@@ -232,7 +235,7 @@ cleanup:
 static readstat_error_t sas7bdat_parse_row_size_subheader(const char *subheader, size_t len, sas7bdat_ctx_t *ctx) {
     readstat_error_t retval = READSTAT_OK;
     uint64_t total_row_count;
-    uint64_t row_length, page_row_count;
+    uint64_t row_length, deleted_row_limit, page_row_count;
 
     if (len < (ctx->u64 ? 250: 190)) {
         retval = READSTAT_ERROR_PARSE;
@@ -242,12 +245,20 @@ static readstat_error_t sas7bdat_parse_row_size_subheader(const char *subheader,
     if (ctx->u64) {
         row_length = sas_read8(&subheader[40], ctx->bswap);
         total_row_count = sas_read8(&subheader[48], ctx->bswap);
+        deleted_row_limit = sas_read8(&subheader[56], ctx->bswap);
         page_row_count = sas_read8(&subheader[120], ctx->bswap);
     } else {
         row_length = sas_read4(&subheader[20], ctx->bswap);
         total_row_count = sas_read4(&subheader[24], ctx->bswap);
+        deleted_row_limit = sas_read4(&subheader[28], ctx->bswap);
         page_row_count = sas_read4(&subheader[60], ctx->bswap);
     }
+
+    if (deleted_row_limit > total_row_count) {
+        retval = READSTAT_ERROR_PARSE;
+        goto cleanup;
+    }
+    ctx->deleted_row_limit = deleted_row_limit;
 
     sas_text_ref_t file_label_ref = sas7bdat_parse_text_ref(&subheader[len-130], ctx);
     if (file_label_ref.length) {
@@ -393,6 +404,22 @@ cleanup:
     return retval;
 }
 
+static readstat_error_t sas7bdat_register_deleted_row(sas7bdat_ctx_t *ctx) {
+    if (ctx->parsed_row_count == ctx->row_limit) {
+        return READSTAT_OK;
+    }
+    if (ctx->parsed_deleted_row_count >= ctx->deleted_row_limit) {
+        return READSTAT_ERROR_PARSE;
+    }
+    ctx->parsed_row_count++;
+    ctx->parsed_deleted_row_count++;
+    return READSTAT_OK;
+}
+
+static uint32_t sas7bdat_get_current_row_id(sas7bdat_ctx_t *ctx) {
+    return ctx->parsed_row_count - ctx->parsed_deleted_row_count;
+}
+
 static readstat_error_t sas7bdat_handle_data_value(readstat_variable_t *variable, 
         col_info_t *col_info, const char *col_data, sas7bdat_ctx_t *ctx) {
     readstat_error_t retval = READSTAT_OK;
@@ -409,7 +436,7 @@ static readstat_error_t sas7bdat_handle_data_value(readstat_variable_t *variable
             if (ctx->handle.error) {
                 snprintf(ctx->error_buf, sizeof(ctx->error_buf),
                         "ReadStat: Error converting string (row=%u, col=%u) to specified encoding: %.*s",
-                        ctx->parsed_row_count+1, col_info->index+1, col_info->width, col_data);
+                        sas7bdat_get_current_row_id(ctx)+1, col_info->index+1, col_info->width, col_data);
                 ctx->handle.error(ctx->error_buf, ctx->user_ctx);
             }
             goto cleanup;
@@ -441,7 +468,7 @@ static readstat_error_t sas7bdat_handle_data_value(readstat_variable_t *variable
             value.v.double_value = dval;
         }
     }
-    cb_retval = ctx->handle.value(ctx->parsed_row_count, variable, value, ctx->user_ctx);
+    cb_retval = ctx->handle.value(sas7bdat_get_current_row_id(ctx), variable, value, ctx->user_ctx);
 
     if (cb_retval != READSTAT_HANDLER_OK)
         retval = READSTAT_ERROR_USER_ABORT;
@@ -490,7 +517,15 @@ cleanup:
     return retval;
 }
 
-static readstat_error_t sas7bdat_parse_rows(const char *data, size_t len, sas7bdat_ctx_t *ctx) {
+static unsigned char sas7bdat_read_bitmap(const unsigned char *bitmap, int index) {
+    unsigned char current_byte = bitmap[index / CHAR_BIT];
+    unsigned char mask = 1 << (CHAR_BIT - 1 - index % CHAR_BIT);
+
+    return current_byte & mask;
+}
+
+static readstat_error_t sas7bdat_parse_rows(const char *data, size_t len,
+        const unsigned char *deleted_bitmap, sas7bdat_ctx_t *ctx) {
     readstat_error_t retval = READSTAT_OK;
     int i;
     size_t row_offset=0;
@@ -499,8 +534,13 @@ static readstat_error_t sas7bdat_parse_rows(const char *data, size_t len, sas7bd
             retval = READSTAT_ERROR_ROW_WIDTH_MISMATCH;
             goto cleanup;
         }
-        if ((retval = sas7bdat_parse_single_row(&data[row_offset], ctx)) != READSTAT_OK)
+        if (deleted_bitmap != NULL && sas7bdat_read_bitmap(deleted_bitmap, i)) {
+            if ((retval = sas7bdat_register_deleted_row(ctx)) != READSTAT_OK) {
+                goto cleanup;
+            }
+        } else if ((retval = sas7bdat_parse_single_row(&data[row_offset], ctx)) != READSTAT_OK) {
             goto cleanup;
+        }
 
         row_offset += ctx->row_length;
     }
@@ -611,7 +651,7 @@ static readstat_error_t sas7bdat_parse_subheader_rle(const char *subheader, size
         if (ctx->handle.error) {
             snprintf(ctx->error_buf, sizeof(ctx->error_buf), 
                     "ReadStat: Row #%d decompressed to %ld bytes (expected %d bytes)",
-                    ctx->parsed_row_count, (long)(bytes_decompressed), ctx->row_length);
+                    sas7bdat_get_current_row_id(ctx), (long)(bytes_decompressed), ctx->row_length);
             ctx->handle.error(ctx->error_buf, ctx->user_ctx);
         }
         goto cleanup;
@@ -739,7 +779,7 @@ static readstat_error_t sas7bdat_submit_columns(sas7bdat_ctx_t *ctx, int compres
     readstat_error_t retval = READSTAT_OK;
     if (ctx->handle.metadata) {
         readstat_metadata_t metadata = {
-            .row_count = ctx->row_limit,
+            .row_count = ctx->row_limit - ctx->deleted_row_limit,
             .var_count = ctx->column_count,
             .table_name = ctx->table_name,
             .file_label = ctx->file_label,
@@ -931,7 +971,7 @@ static readstat_error_t sas7bdat_parse_page_pass1(const char *page, size_t page_
                         goto cleanup;
                     }
                 }
-            } else if (shp_info.compression == SAS_COMPRESSION_ROW) {
+            } else if (shp_info.compression == SAS_COMPRESSION_ROW || shp_info.compression == SAS_COMPRESSION_DELETED_ROW) {
                 /* void */
             } else {
                 retval = READSTAT_ERROR_UNSUPPORTED_COMPRESSION;
@@ -945,6 +985,25 @@ static readstat_error_t sas7bdat_parse_page_pass1(const char *page, size_t page_
 cleanup:
 
     return retval;
+}
+
+static readstat_error_t sas7bdat_parse_deleted_row_bitmap(const char *page, const char *data,
+        size_t page_size, const unsigned char **deleted_row_bitmap, sas7bdat_ctx_t *ctx) {
+    uint64_t page_unused_bytes;
+    if (ctx->u64) {
+        page_unused_bytes = sas_read8(&page[24], ctx->bswap);
+    } else {
+        page_unused_bytes = sas_read4(&page[12], ctx->bswap);
+    }
+    uint32_t row_count = ctx->page_row_count < ctx->row_limit ? ctx->page_row_count : ctx->row_limit;
+    uint64_t deleted_row_bitmap_offset = row_count * ctx->row_length + page_unused_bytes;
+    uint32_t required_bytes = row_count / CHAR_BIT + (row_count % CHAR_BIT == 0 ? 0 : 1);
+
+    if ((data - page) + deleted_row_bitmap_offset + required_bytes > page_size) {
+        return READSTAT_ERROR_PARSE;
+    }
+    *deleted_row_bitmap = (const unsigned char *)data + deleted_row_bitmap_offset;
+    return READSTAT_OK;
 }
 
 static readstat_error_t sas7bdat_parse_page_pass2(const char *page, size_t page_size, sas7bdat_ctx_t *ctx) {
@@ -1007,6 +1066,10 @@ static readstat_error_t sas7bdat_parse_page_pass2(const char *page, size_t page_
                     if ((retval = sas7bdat_parse_subheader_compressed(page + shp_info.offset, shp_info.len, ctx)) != READSTAT_OK) {
                         goto cleanup;
                     }
+                } else if (shp_info.compression == SAS_COMPRESSION_DELETED_ROW) {
+                    if ((retval = sas7bdat_register_deleted_row(ctx)) != READSTAT_OK) {
+                        goto cleanup;
+                    }
                 } else {
                     retval = READSTAT_ERROR_UNSUPPORTED_COMPRESSION;
                     goto cleanup;
@@ -1036,7 +1099,14 @@ static readstat_error_t sas7bdat_parse_page_pass2(const char *page, size_t page_
             goto cleanup;
         }
         if (ctx->handle.value) {
-            retval = sas7bdat_parse_rows(data, page + page_size - data, ctx);
+            const unsigned char *deleted_row_bitmap = NULL;
+            if (page_type & SAS_PAGE_TYPE_DELETED_ROWS) {
+                if ((retval = sas7bdat_parse_deleted_row_bitmap(page, data, page_size,
+                        &deleted_row_bitmap, ctx)) != READSTAT_OK) {
+                    goto cleanup;
+                }
+            }
+            retval = sas7bdat_parse_rows(data, page + page_size - data, deleted_row_bitmap, ctx);
         }
     } 
 cleanup:
@@ -1308,11 +1378,22 @@ readstat_error_t readstat_parse_sas7bdat(readstat_parser_t *parser, const char *
         goto cleanup;
     }
 
+    if (ctx->handle.value && ctx->parsed_deleted_row_count != ctx->deleted_row_limit) {
+        retval = READSTAT_ERROR_ROW_COUNT_MISMATCH;
+        if (ctx->handle.error) {
+            snprintf(ctx->error_buf, sizeof(ctx->error_buf), "ReadStat: Expected %d deleted rows in file, found %d",
+                    ctx->deleted_row_limit, ctx->parsed_deleted_row_count);
+            ctx->handle.error(ctx->error_buf, ctx->user_ctx);
+        }
+        goto cleanup;
+    }
+
     if (ctx->handle.value && ctx->parsed_row_count != ctx->row_limit) {
         retval = READSTAT_ERROR_ROW_COUNT_MISMATCH;
         if (ctx->handle.error) {
             snprintf(ctx->error_buf, sizeof(ctx->error_buf), "ReadStat: Expected %d rows in file, found %d",
-                    ctx->row_limit, ctx->parsed_row_count);
+                    ctx->row_limit - ctx->deleted_row_limit,
+                    ctx->parsed_row_count - ctx->parsed_deleted_row_count);
             ctx->handle.error(ctx->error_buf, ctx->user_ctx);
         }
         goto cleanup;
