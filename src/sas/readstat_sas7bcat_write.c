@@ -33,7 +33,7 @@ static sas7bcat_block_t *sas7bcat_block_for_label_set(readstat_label_set_t *r_la
 
     for (j=0; j<r_label_set->value_labels_count; j++) {
         readstat_value_label_t *value_label = readstat_get_value_label(r_label_set, j);
-        len += 30; // Value: 14-byte header + 16-byte padded value
+        len += 38; // Value: 22-byte header + 16-byte padded value
 
         len += 8 + 2 + value_label->label_len + 1;
     }
@@ -60,11 +60,11 @@ static sas7bcat_block_t *sas7bcat_block_for_label_set(readstat_label_set_t *r_la
     }
 
     char *lbp1 = &block->data[begin];
-    char *lbp2 = &block->data[begin+r_label_set->value_labels_count*30];
+    char *lbp2 = &block->data[begin+r_label_set->value_labels_count*38];
 
     for (j=0; j<r_label_set->value_labels_count; j++) {
         readstat_value_label_t *value_label = readstat_get_value_label(r_label_set, j);
-        int16_t value_entry_len = 24; // size - 6
+        int16_t value_entry_len = 32; // size - 6
         memcpy(&lbp1[2], &value_entry_len, sizeof(int16_t));
         int32_t index = j;
         memcpy(&lbp1[10], &index, sizeof(int32_t));
@@ -72,8 +72,8 @@ static sas7bcat_block_t *sas7bcat_block_for_label_set(readstat_label_set_t *r_la
             size_t string_len = value_label->string_key_len;
             if (string_len > 16)
                 string_len = 16;
-            memset(&lbp1[14], ' ', 16);
-            memcpy(&lbp1[14], value_label->string_key, string_len);
+            memset(&lbp1[22], ' ', 16);
+            memcpy(&lbp1[22], value_label->string_key, string_len);
         } else {
             uint64_t big_endian_value;
             double double_value = value_label->double_key;
