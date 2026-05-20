@@ -653,8 +653,8 @@ cdef void initial_checks(bint is_pandas, bint is_polars, dict variable_value_lab
                 raise PyreadstatError("variable name '%s' is of type %s and it must be str (not starting with numbers!)" % (variable_name, str(type(variable_name))))
         if len(variable_name) == 0:
             raise PyreadstatError("variable names must be non-empty strings, not starting with numbers")
-        if not variable_name[0].isalpha():
-            raise PyreadstatError("variable name '%s' starts with an illegal (non-alphabetic) character: '%s' (ordinal %s)" % (variable_name, variable_name[0], ord(variable_name[0])))
+        if not (variable_name[0].isalpha() or variable_name[0] == "_"):
+            raise PyreadstatError("variable name '%s' starts with an illegal (neither alphabetic nor an underscore) character: '%s' (ordinal %s)" % (variable_name, variable_name[0], ord(variable_name[0])))
         if " " in variable_name:
             raise PyreadstatError("variable name '%s' contains a space, which is not allowed" % variable_name)
 
