@@ -49,6 +49,12 @@ readstat_error_t readstat_set_value_label_handler(readstat_parser_t *parser, rea
     return READSTAT_OK;
 }
 
+readstat_error_t readstat_set_extended_value_label_handler(readstat_parser_t *parser,
+        readstat_extended_value_label_handler label_handler) {
+    parser->handlers.extended_value_label = label_handler;
+    return READSTAT_OK;
+}
+
 readstat_error_t readstat_set_error_handler(readstat_parser_t *parser, readstat_error_handler error_handler) {
     parser->handlers.error = error_handler;
     return READSTAT_OK;

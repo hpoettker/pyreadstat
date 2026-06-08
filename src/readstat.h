@@ -38,6 +38,11 @@ typedef enum readstat_type_class_e {
     READSTAT_TYPE_CLASS_NUMERIC
 } readstat_type_class_t;
 
+typedef enum readstat_sas_map_type_e {
+    READSTAT_SAS_MAP_TYPE_FORMAT,
+    READSTAT_SAS_MAP_TYPE_INFORMAT
+} readstat_sas_map_type_t;
+
 typedef enum readstat_measure_e {
     READSTAT_MEASURE_UNKNOWN,
     READSTAT_MEASURE_NOMINAL = 1,
@@ -314,6 +319,10 @@ typedef int (*readstat_value_label_handler)(const char *val_labels,
 typedef void (*readstat_error_handler)(const char *error_message, void *ctx);
 typedef int (*readstat_progress_handler)(double progress, void *ctx);
 
+typedef int (*readstat_extended_value_label_handler)(const char *format_name,
+        readstat_sas_map_type_t map_type, const readstat_value_t *value,
+        const readstat_value_t *label, void *ctx);
+
 #if defined(_MSC_VER)
 #include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
@@ -349,14 +358,15 @@ typedef struct readstat_io_s {
 } readstat_io_t;
 
 typedef struct readstat_callbacks_s {
-    readstat_metadata_handler      metadata;
-    readstat_note_handler          note;
-    readstat_variable_handler      variable;
-    readstat_fweight_handler       fweight;
-    readstat_value_handler         value;
-    readstat_value_label_handler   value_label;
-    readstat_error_handler         error;
-    readstat_progress_handler      progress;
+    readstat_metadata_handler               metadata;
+    readstat_note_handler                   note;
+    readstat_variable_handler               variable;
+    readstat_fweight_handler                fweight;
+    readstat_value_handler                  value;
+    readstat_value_label_handler            value_label;
+    readstat_extended_value_label_handler   extended_value_label;
+    readstat_error_handler                  error;
+    readstat_progress_handler               progress;
 } readstat_callbacks_t;
 
 typedef struct readstat_parser_s {
@@ -380,6 +390,9 @@ readstat_error_t readstat_set_value_handler(readstat_parser_t *parser, readstat_
 readstat_error_t readstat_set_value_label_handler(readstat_parser_t *parser, readstat_value_label_handler value_label_handler);
 readstat_error_t readstat_set_error_handler(readstat_parser_t *parser, readstat_error_handler error_handler);
 readstat_error_t readstat_set_progress_handler(readstat_parser_t *parser, readstat_progress_handler progress_handler);
+
+readstat_error_t readstat_set_extended_value_label_handler(readstat_parser_t *parser,
+        readstat_extended_value_label_handler handler);
 
 readstat_error_t readstat_set_open_handler(readstat_parser_t *parser, readstat_open_handler open_handler);
 readstat_error_t readstat_set_close_handler(readstat_parser_t *parser, readstat_close_handler close_handler);

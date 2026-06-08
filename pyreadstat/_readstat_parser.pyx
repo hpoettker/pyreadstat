@@ -21,6 +21,7 @@
 from cpython.datetime cimport import_datetime, timedelta_new, datetime_new, total_seconds
 from cpython.exc cimport PyErr_Occurred
 from cpython.object cimport PyObject
+from cython.operator cimport dereference
 from libc.math cimport floor
 from libc.string cimport memcpy
 
@@ -36,7 +37,7 @@ import numpy as np
 
 from readstat_api cimport *
 
-from pyclasses import metadata_container
+from pyclasses import FormatMap, metadata_container
 
 # necessary to work with the datetime C API
 import_datetime()
@@ -306,8 +307,12 @@ cdef object convert_readstat_to_python_value(readstat_value_t value, int index, 
     cdef double tstamp
     cdef str output_format
 
-    var_type = dc.col_dtypes[index]
-    var_format = dc.col_formats[index]
+    if index >= 0:
+        var_type = dc.col_dtypes[index]
+        var_format = dc.col_formats[index]
+    else:
+        var_type = readstat_value_type(value)
+        var_format = DATE_FORMAT_NOTADATE
     origin = dc.origin
     unix_to_origin_secs = dc.unix_to_origin_secs
     dates_as_pandas = dc.dates_as_pandas
@@ -819,6 +824,40 @@ cdef int handle_value_label(char *val_labels, readstat_value_t value, char *labe
 
     return READSTAT_HANDLER_OK
 
+cdef int handle_extended_value_label(char *format_name_c, readstat_sas_map_type_t map_type, const readstat_value_t *value, const readstat_value_t *label, void *ctx) except READSTAT_HANDLER_ABORT:
+    """
+    Reads the label for the value that belongs to the label set format_name. In Handle variable we need to do a map
+    from variable name to format_name so that later we can match both things.    
+    """
+
+    cdef data_container dc = <data_container> ctx
+    cdef str format_name = <str> format_name_c
+    cdef object labels_raw = dc.labels_raw
+
+    format_map = labels_raw.get(format_name)
+    if format_map is None:
+        py_map_type = 'FORMAT' if map_type == READSTAT_SAS_MAP_TYPE_FORMAT else 'INFORMAT'
+        format_map = FormatMap(map_type=py_map_type)
+        labels_raw[format_name] = format_map
+
+    py_label = None
+    if not readstat_value_is_missing(dereference(label), NULL):
+        py_label = convert_readstat_to_python_value(dereference(label), -1, dc)
+
+    if value == NULL:
+        if format_map.has_default:
+            raise PyreadstatError(f"Duplicate default label definition for format '{format_name}'")
+        format_map.default_value = py_label
+        format_map.has_default = True
+    elif readstat_value_is_tagged_missing(dereference(value)):
+        missing_tag = <int> readstat_value_tag(dereference(value))
+        format_map[chr(missing_tag)] = py_label
+    else:
+        py_value = convert_readstat_to_python_value(dereference(value), -1, dc)
+        format_map[py_value] = py_label
+
+    return READSTAT_HANDLER_OK
+
 cdef int handle_note (int note_index, char *note, void *ctx) except READSTAT_HANDLER_ABORT:
     """
     Collects notes (text annotations) attached to the documents. It happens for spss and stata
@@ -927,6 +966,7 @@ cdef void run_readstat_parser(char * filename, data_container data, py_file_exte
     cdef readstat_variable_handler variable_handler
     cdef readstat_value_handler value_handler
     cdef readstat_value_label_handler value_label_handler
+    cdef readstat_extended_value_label_handler extended_value_label_handler
     cdef readstat_note_handler note_handler
     cdef readstat_open_handler open_handler
     cdef readstat_close_handler close_handler
@@ -949,12 +989,14 @@ cdef void run_readstat_parser(char * filename, data_container data, py_file_exte
     variable_handler = <readstat_variable_handler> handle_variable
     value_handler = <readstat_value_handler> handle_value
     value_label_handler = <readstat_value_label_handler> handle_value_label
+    extended_value_label_handler = <readstat_extended_value_label_handler> handle_extended_value_label
     note_handler = <readstat_note_handler> handle_note
     
     
     check_exit_status(readstat_set_metadata_handler(parser, metadata_handler))
     check_exit_status(readstat_set_variable_handler(parser, variable_handler))
     check_exit_status(readstat_set_value_label_handler(parser, value_label_handler))
+    check_exit_status(readstat_set_extended_value_label_handler(parser, extended_value_label_handler))
     check_exit_status(readstat_set_note_handler(parser, note_handler))
 
     # Set up custom I/O handlers for file objects

@@ -70,3 +70,44 @@ class metadata_container:
     creation_time: datetime | None = None
     modification_time: datetime | None = None
     mr_sets: dict[str, MRSet] = field(default_factory=dict)
+
+
+# In a new section in pyclasses.py, or a new file if preferred
+
+class FormatMap(dict):
+    """
+    A dictionary-like object representing a single SAS format or informat.
+
+    It stores value-to-label mappings and includes metadata about the
+    map type (format vs. informat) and any explicit default label defined
+    in the source file.
+    """
+    def __init__(self, map_type, default_value=None, has_default=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.map_type = map_type  # 'FORMAT' or 'INFORMAT'
+        self.has_default = has_default
+        self.default_value = default_value
+
+    def get_replacement_map(self, series):
+        """
+        Builds a complete replacement dictionary for a given data series,
+        applying this map's rules for default and unmapped values.
+        """
+        replacement_dict = self.copy()
+
+        # Get unique values from the series that are not already mapped
+        if series.null_count() == len(series):
+            unmapped_values = []
+        else:
+            unmapped_values = set(series.unique()) - set(self.keys())
+
+        for val in unmapped_values:
+            if self.has_default:
+                replacement_dict[val] = self.default_value
+            else:
+                if self.map_type == 'FORMAT':
+                    replacement_dict[val] = str(val)
+                else: # 'INFORMAT'
+                    replacement_dict[val] = None
+
+        return replacement_dict
