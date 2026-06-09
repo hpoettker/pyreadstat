@@ -293,7 +293,7 @@ cdef object convert_readstat_to_python_value(readstat_value_t value, int index, 
     cdef py_file_format file_format
     cdef object result
 
-    cdef char * c_str_value
+    cdef const char * c_str_value
     cdef str py_str_value
     cdef int8_t c_int8_value
     cdef int16_t c_int16_value
@@ -385,15 +385,15 @@ cdef int handle_metadata(readstat_metadata_t *metadata, void *ctx) except READST
     cdef int var_count, obs_count, mr_len
     cdef  data_container dc = <data_container> ctx
     #cdef object row
-    cdef char * flabel_orig
-    cdef char * fencoding_orig
+    cdef const char * flabel_orig
+    cdef const char * fencoding_orig
     cdef str flabel, fencoding
     cdef bint metaonly
-    cdef char * table
+    cdef const char * table
     cdef int ctime
     cdef int mtime
     cdef int i = 0
-    cdef mr_set_t * mr_sets_orig
+    cdef const mr_set_t * mr_sets_orig
     cdef dict mr_sets = {}
     cdef str name
     cdef list variable_list = []
@@ -468,9 +468,9 @@ cdef int handle_variable(int index, readstat_variable_t *variable,
     if any.
     """
 
-    cdef char * var_name, 
-    cdef char * var_label
-    cdef char * var_format
+    cdef const char * var_name, 
+    cdef const char * var_label
+    cdef const char * var_format
     cdef str col_name, col_label, label_name, col_format_original, output_format
     cdef py_datetime_format col_format_final
     cdef readstat_type_t var_type
@@ -742,7 +742,7 @@ cdef int handle_value_label(char *val_labels, readstat_value_t value, char *labe
 
     cdef  data_container dc = <data_container> ctx
 
-    cdef char * c_str_value
+    cdef const char * c_str_value
     cdef str py_str_value
     cdef int8_t c_int8_value
     cdef int16_t c_int16_value
@@ -905,7 +905,7 @@ cdef void check_exit_status(readstat_error_t retcode) except *:
     transforms a readstat exit status to a python error if status is not READSTAT OK
     """
 
-    cdef char * err_readstat
+    cdef const char * err_readstat
     cdef str err_message
     if retcode != READSTAT_OK:
         err_readstat = readstat_error_message(retcode)
@@ -943,7 +943,7 @@ cdef void run_readstat_parser(char * filename, data_container data, py_file_exte
     metaonly = data.metaonly
     ctx = <void *>data
     
-    #readstat_error_t error = READSTAT_OK;
+    error = READSTAT_OK;
     parser = readstat_parser_init()
     metadata_handler = <readstat_metadata_handler> handle_metadata
     variable_handler = <readstat_variable_handler> handle_variable
