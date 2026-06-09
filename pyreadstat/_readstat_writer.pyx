@@ -146,7 +146,8 @@ cdef double convert_datetimelike_to_number(dst_file_format file_format, pywriter
     converts a datime like python/pandas object to a float
     """
 
-    cdef double offset_days, tstamp
+    cdef double offset_days
+    cdef double tstamp = 0
 
     if file_format == FILE_FORMAT_SAV or file_format == FILE_FORMAT_POR:
         offset_days = spss_offset_days
@@ -573,18 +574,6 @@ cdef ssize_t write_bytes(const void *data, size_t _len, void *ctx) noexcept:
         return _write(fd, data, _len)
     else:
         return write(fd, data, _len)
-
-cdef void _check_exit_status(readstat_error_t retcode) except *:
-    """
-    transforms a readstat exit status to a python error if status is not READSTAT OK
-    """
-
-    cdef char * err_readstat
-    cdef str err_message
-    if retcode != READSTAT_OK:
-        err_readstat = readstat_error_message(retcode)
-        err_message = <str> err_readstat
-        raise ReadstatError(err_message)
 
 cdef int open_file(bytes filename_bytes):
 
