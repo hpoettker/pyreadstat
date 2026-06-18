@@ -144,19 +144,20 @@ static readstat_error_t sas7bcat_parse_value_labels(const char *value_start, siz
             if (name[1] == '$') {
                 size_t label_entry_len = 6 + sas_read2(&lbp2[2], ctx->bswap);
                 if (ctx->extended_value_label_handler) {
-                    char string_lab[4*16+1];
                     size_t string_start = 10;
+                    size_t label_len = label_entry_len - string_start;
+                    label = realloc(label, 4 * label_len + 1);
                     if (&lbp2[label_entry_len] - value_start > value_labels_len) {
                         retval = READSTAT_ERROR_PARSE;
                         goto cleanup;
                     }
-                    retval = readstat_convert(string_lab, sizeof(string_val),
-                            &lbp2[string_start], label_entry_len - string_start, ctx->converter);
+                    retval = readstat_convert(label, sizeof(string_val),
+                            &lbp2[string_start], label_len, ctx->converter);
                     if (retval != READSTAT_OK)
                         goto cleanup;
 
                     label_val.type = READSTAT_TYPE_STRING;
-                    label_val.v.string_value = string_lab;
+                    label_val.v.string_value = label;
                 }
                 lbp2 += label_entry_len;
             } else {
