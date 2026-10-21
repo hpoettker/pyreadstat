@@ -1470,3 +1470,61 @@ def write_por(
         column_labels=column_labels,
         variable_format=variable_format,
     )
+
+
+def write_sas7bdat(
+    df: "DataFrame",
+    dst_path: FilePathLike,
+    file_label: str = "",
+    column_labels: list[str | None] | dict[str, str | None] | None = None,
+    table_name: str | None = None,
+    row_compress: bool = False,
+    missing_user_values: dict[str, list[str]] | None = None,
+    variable_format: dict[str, str] | None = None,
+    variable_informat: dict[str, str] | None = None,
+) -> None:
+    """
+    Writes a dataframe to a SAS sas7bdat file.
+
+    Parameters
+    ----------
+    df : dataframe
+        dataframe to write to sas7bdat
+    dst_path : str, bytes or Path-like object
+        full path to the result sas7bdat file
+    file_label : str, optional
+        a label for the file
+    column_labels : list or dict, optional
+        labels for columns (variables), if list must be the same length as the number of columns. Variables with no
+        labels must be represented by None. If dict values must be variable names and values variable labels.
+        In such case there is no need to include all variables; labels for non existent
+        variables will be ignored with no warning or error.
+    table_name : str, optional
+        name of the dataset, by default DATASET
+    row_compress : boolean, optional
+        if true it applies row compression, by default False
+    missing_user_values : dict, optional
+        user defined missing values for numeric variables. Must be a dictionary with keys being variable
+        names and values being a list of missing values. Missing values must be a single character
+        between A and Z or '_'.
+    variable_format: dict, optional
+        sets the format of a variable. Must be a dictionary with keys being the variable names and
+        values being strings defining the SAS format (e.g. {"my_col": "DATE9."}).
+    variable_informat: dict, optional
+        sets the informat of a variable. Must be a dictionary with keys being the variable names and
+        values being strings defining the SAS informat.
+    """
+
+    writer_format = "sas7bdat"
+    writer_entry_point(
+        df,
+        dst_path,
+        writer_format=writer_format,
+        file_label=file_label,
+        column_labels=column_labels,
+        table_name=table_name,
+        row_compress=row_compress,
+        missing_user_values=missing_user_values,
+        variable_format=variable_format,
+        variable_informat=variable_informat,
+    )

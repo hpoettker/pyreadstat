@@ -1572,6 +1572,70 @@ class TestBasic(unittest.TestCase):
         self.assertTrue(df_multi.equals(df_single))
         self.assertEqual(meta_multi.number_rows, meta_single.number_rows)
 
+    # SAS7BDAT Writing Tests
+
+    def test_sas7bdat_write_basic(self):
+        file_label = "basic write"
+        col_labels = ["mychar label", "mynum label", "mydate label", "dtime label", None, "myord label", "mytime label"]
+        path = os.path.join(self.write_folder, "basic_write.sas7bdat")
+        pyreadstat.write_sas7bdat(self.df_pandas, path, file_label=file_label, column_labels=col_labels)
+        df, meta = pyreadstat.read_sas7bdat(path, output_format=self.backend)
+        self.assertTrue(df.equals(self.df_pandas))
+        self.assertEqual(meta.file_label, file_label)
+        self.assertListEqual(meta.column_labels, col_labels)
+
+    def test_sas7bdat_write_dates(self):
+        path = os.path.join(self.write_folder, "dates_write.sas7bdat")
+        pyreadstat.write_sas7bdat(self.df_sas_dates2, path)
+        df, meta = pyreadstat.read_sas7bdat(path, output_format=self.backend)
+        self.assertTrue(df.equals(self.df_sas_dates2))
+
+    def test_sas7bdat_write_charnan(self):
+        path = os.path.join(self.write_folder, "charnan.sas7bdat")
+        pyreadstat.write_sas7bdat(self.df_charnan, path)
+        df, meta = pyreadstat.read_sas7bdat(path, output_format=self.backend)
+        df2 = nw.from_native(self.df_charnan)
+        if self.backend != "pandas":
+            new_ser = nw.new_series(name="object", values=[str(x) if x is not None else None for x in df2["object"]], dtype=nw.String, backend=self.backend)
+            df2 = df2.with_columns(new_ser.alias("object"))
+        df2 = df2.with_columns(nw.col("string", "object").fill_null(""))
+        df2 = df2.with_columns(nw.col("integer").cast(nw.Float64))
+        if self.backend == "pandas":
+            df2 = df2.with_columns(nw.col("object").cast(nw.String))
+        df2 = df2.to_native()
+        self.assertTrue(df2.equals(df))
+
+    def test_sas7bdat_write_rowcompression(self):
+        file_label = "row compression write"
+        col_labels = ["mychar label", "mynum label", "mydate label", "dtime label", None, "myord label", "mytime label"]
+        path = os.path.join(self.write_folder, "rowcompression_write.sas7bdat")
+        pyreadstat.write_sas7bdat(self.df_pandas, path, file_label=file_label, column_labels=col_labels, row_compress=True)
+        df, meta = pyreadstat.read_sas7bdat(path, output_format=self.backend)
+        self.assertTrue(df.equals(self.df_pandas))
+        self.assertEqual(meta.file_label, file_label)
+        self.assertListEqual(meta.column_labels, col_labels)
+
+    def test_sas7bdat_write_user_missing(self):
+        if self.backend == "pandas":
+            df_csv = pd.DataFrame.from_dict({"Var1": [3.0, "A"], "Var2":["a", "b"]})
+        else:
+            df_csv = nw.from_dict({"Var1": [3.0, "A"], "Var2":["a", "b"]}, backend=self.backend, schema={"Var1":nw.Object, "Var2":nw.String}).to_native()
+
+        missing_user_values = {'Var1': ['A']}
+        path = os.path.join(self.write_folder, "user_missing_write.sas7bdat")
+        pyreadstat.write_sas7bdat(df_csv, path, missing_user_values=missing_user_values)
+
+        df_sas, meta = pyreadstat.read_sas7bdat(path, user_missing=True, output_format=self.backend)
+
+        if self.backend != "pandas":
+            new_ser = nw.new_series(name="Var1", values=[str(x) for x in df_csv["Var1"]], dtype=nw.String, backend=self.backend)
+            df_csv = nw.from_native(df_csv).with_columns(new_ser.alias("Var1")).to_native()
+            new_ser = nw.new_series(name="Var1", values=[str(x) for x in df_sas["Var1"]], dtype=nw.String, backend=self.backend)
+            df_sas = nw.from_native(df_sas).with_columns(new_ser.alias("Var1")).to_native()
+
+        self.assertTrue(df_csv.equals(df_sas))
+        self.assertDictEqual(meta.missing_user_values, missing_user_values)
+
 
 if __name__ == '__main__':
 

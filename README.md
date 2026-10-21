@@ -281,7 +281,7 @@ print(df.head())
 
 #### Writing files
 
-Pyreadstat can write STATA (dta), SPSS (sav and zsav, por currently nor supported) and SAS (Xport, sas7bdat and sas7bcat
+Pyreadstat can write STATA (dta), SPSS (sav, zsav, and por) and SAS (Xport and sas7bdat, sas7bcat
 currently not supported) files from pandas or polars dataframes.
 
 write functions take as first argument a pandas or polars dataframe (other data structures are not supported), as a second argument
@@ -321,6 +321,7 @@ You can also check the [Module documentation](https://ofajardo.github.io/pyreads
 | write_por           | write SPSS Portable (POR) files |
 | write_dta           | write STATA dta files |
 | write_xport         | write SAS Xport (XPT) files version 8 and 5 |
+| write_sas7bdat      | write SAS sas7bdat files |
 
 
 ### More reading options
@@ -928,9 +929,6 @@ are welcome.
 ## Known limitations
 
 pyreadstat builds on top of Readstat and therefore inherits its limitations. Currently those include:
-
-* Cannot write SAS sas7bdat. Those files can be written but not read in
-SAS and therefore are not supported in pyreadstat. (see [here](https://github.com/WizardMac/ReadStat/issues/98))
 
 Converting data types from foreign applications into python some times also bring some limitations:
 

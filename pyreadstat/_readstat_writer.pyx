@@ -799,7 +799,7 @@ cdef int run_write(df, object filename_path, dst_file_format file_format, str fi
         if row_compression:
             check_exit_status(readstat_writer_set_compression(writer, READSTAT_COMPRESS_ROWS))
 
-        # table name is used only for xpt files
+        # table name is used only for xpt and sas7bdat files
         if table_name:
             table_name_bytes = table_name.encode("utf-8")
             tab_name = <char *> table_name_bytes
@@ -1049,6 +1049,11 @@ def writer_entry_point(df, dst_path, str writer_format=None, str file_label="",
         file_format_version = version
     elif writer_format == "por":
         writer_file_format = FILE_FORMAT_POR
+    elif writer_format == "sas7bdat":
+        writer_file_format = FILE_FORMAT_SAS7BDAT
+        file_format_version = version
+        if row_compress:
+            row_compression = 1
     else:
         raise PyreadstatError("wrong writer format")
 
